@@ -8,6 +8,7 @@ import {
   Copy,
   Eye,
   FilePlus2,
+  ListChecks,
   LoaderCircle,
   LogOut,
   Menu,
@@ -15,14 +16,16 @@ import {
   Plus,
   Save,
   Send,
+  Settings2,
   Sparkles,
   Trash2,
   X,
 } from 'lucide-react'
 import { AIWizard } from './components/AIWizard'
 import { ChecklistCanvas } from './components/ChecklistCanvas'
+import { ChecklistSettings } from './components/ChecklistSettings'
 import { Inspector } from './components/Inspector'
-import { Palette } from './components/Palette'
+import { ItemTypeModal } from './components/ItemTypeModal'
 import { PreviewModal } from './components/PreviewModal'
 import { catalogByType } from './lib/catalog'
 import { materializeGenerated } from './lib/demo'
@@ -49,6 +52,9 @@ export default function App() {
   const [notice, setNotice] = useState('')
   const [showAI, setShowAI] = useState(false)
   const [showPreview, setShowPreview] = useState(false)
+  const [showItemPicker, setShowItemPicker] = useState(false)
+  const [pickerSectionId, setPickerSectionId] = useState<string | null>(null)
+  const [builderTab, setBuilderTab] = useState<'items' | 'settings'>('items')
   const [sidebarOpen, setSidebarOpen] = useState(true)
 
   useEffect(() => {
@@ -79,13 +85,22 @@ export default function App() {
     setActiveId(checklist.id)
     setSelectedSectionId(checklist.sections[0]?.id || null)
     setSelectedItemId(null)
+    setBuilderTab('items')
     if (window.innerWidth < 1000) setSidebarOpen(false)
+  }
+
+  function openItemPicker(sectionId?: string) {
+    setPickerSectionId(sectionId || selectedSectionId || active?.sections[0]?.id || null)
+    setShowItemPicker(true)
   }
 
   function addBlank() {
     const next = blankChecklist()
     setChecklists((current) => [next, ...current])
     chooseChecklist(next)
+    setPickerSectionId(next.sections[0]?.id || null)
+    setShowItemPicker(true)
+    setNotice('Checklist created. Choose the first item type.')
   }
 
   function addSection() {
@@ -104,7 +119,7 @@ export default function App() {
 
   function addItem(type: ItemType, targetSectionId?: string) {
     if (!active) return
-    const sectionId = targetSectionId || selectedSectionId || active.sections[0]?.id
+    const sectionId = targetSectionId || pickerSectionId || selectedSectionId || active.sections[0]?.id
     if (!sectionId) return
     const catalog = catalogByType.get(type)
     const newItem: ChecklistItem = {
@@ -130,6 +145,10 @@ export default function App() {
     }))
     setSelectedSectionId(sectionId)
     setSelectedItemId(newItem.id)
+    setBuilderTab('items')
+    setShowItemPicker(false)
+    setPickerSectionId(null)
+    setNotice('Item Added Successfully')
   }
 
   function updateSelectedItem(patch: Partial<ChecklistItem>) {
@@ -177,7 +196,14 @@ export default function App() {
         const index = section.items.findIndex((item) => item.id === itemId)
         const source = section.items[index]
         if (!source) return section
-        const copy = { ...source, id: newId('item'), label: `${source.label} Copy`, config: { ...source.config }, conditions: [...source.conditions] }
+        const copy = {
+          ...source,
+          id: newId('item'),
+          label: `${source.label} Copy`,
+          config: structuredClone(source.config),
+          conditions: structuredClone(source.conditions),
+          corrective_action: source.corrective_action ? { ...source.corrective_action } : null,
+        }
         const items = [...section.items]
         items.splice(index + 1, 0, copy)
         return { ...section, items }
@@ -221,7 +247,7 @@ export default function App() {
     try {
       const version = await publishChecklist(active.id, `Published version ${active.current_version + 1}`)
       updateActive((checklist) => ({ ...checklist, status: 'published', current_version: version }))
-      setNotice(`Checklist published as version ${version}.`)
+      setNotice(`Checklist finished and published as version ${version}.`)
     } catch (error) {
       setNotice(error instanceof Error ? error.message : 'Unable to publish checklist.')
     }
@@ -232,7 +258,9 @@ export default function App() {
     const checklist = materializeGenerated(generated)
     setChecklists((current) => [checklist, ...current])
     chooseChecklist(checklist)
-    setNotice('AI draft generated. Review and save it before publishing.')
+    setSelectedSectionId(checklist.sections[0]?.id || null)
+    setSelectedItemId(checklist.sections[0]?.items[0]?.id || null)
+    setNotice('AI draft generated with item settings. Review and save it before finishing.')
   }
 
   async function removeActive() {
@@ -268,17 +296,17 @@ export default function App() {
           {!isSupabaseConfigured ? <span className="demo-pill"><Bot size={14} /> Local demo mode</span> : null}
           <button className="secondary" onClick={() => setShowPreview(true)} disabled={!active}><Eye size={16} /> Preview</button>
           <button className="secondary" onClick={save} disabled={!active || saving}>{saving ? <LoaderCircle className="spin" size={16} /> : <Save size={16} />} Save</button>
-          <button className="primary" onClick={publish} disabled={!active}><Send size={16} /> Publish</button>
+          <button className="primary" onClick={publish} disabled={!active}><Send size={16} /> Finish</button>
           {supabase ? <button className="icon-button" title="Sign out" onClick={() => void supabase?.auth.signOut()}><LogOut size={17} /></button> : null}
         </div>
       </header>
 
       <div className="workspace">
         <aside className={`sidebar ${sidebarOpen ? 'open' : ''}`}>
-          <div className="sidebar-header"><div><span>WORKSPACE</span><strong>My Checklists</strong></div><button className="icon-button mobile-only" onClick={() => setSidebarOpen(false)}><X size={18} /></button></div>
+          <div className="sidebar-header"><div><span>CHECKLISTS</span><strong>All Checklists</strong></div><button className="icon-button mobile-only" onClick={() => setSidebarOpen(false)}><X size={18} /></button></div>
           <div className="sidebar-actions">
             <button className="ai-create" onClick={() => setShowAI(true)}><Sparkles size={17} /><span><strong>Create with AI</strong><small>Generate from a description or SOP</small></span></button>
-            <button className="secondary wide" onClick={addBlank}><FilePlus2 size={16} /> New blank checklist</button>
+            <button className="secondary wide" onClick={addBlank}><FilePlus2 size={16} /> Create Checklist</button>
           </div>
           <div className="checklist-list">
             {checklists.map((checklist) => (
@@ -297,41 +325,43 @@ export default function App() {
             <>
               <div className="editor-meta">
                 <div className="meta-copy">
-                  <input className="checklist-name" value={active.name} onChange={(e) => updateActive((checklist) => ({ ...checklist, name: e.target.value }))} />
-                  <textarea rows={1} value={active.description} onChange={(e) => updateActive((checklist) => ({ ...checklist, description: e.target.value }))} placeholder="Checklist description" />
+                  <input className="checklist-name" value={active.name} onChange={(event) => updateActive((checklist) => ({ ...checklist, name: event.target.value }))} />
+                  <textarea rows={1} value={active.description} onChange={(event) => updateActive((checklist) => ({ ...checklist, description: event.target.value }))} placeholder="Checklist description" />
                 </div>
                 <div className="meta-badges"><span className={`status-badge ${active.status}`}>{active.status.replace('_', ' ')}</span><span>Version {active.current_version || 'Draft'}</span>
                   <div className="dropdown"><button className="icon-button"><MoreVertical size={17} /></button><div className="dropdown-menu"><button onClick={createCopy}><Copy size={15} /> Duplicate</button><button onClick={() => updateActive((checklist) => ({ ...checklist, status: 'archived' }))}><Archive size={15} /> Archive</button><button className="danger" onClick={removeActive}><Trash2 size={15} /> Delete</button></div></div>
                 </div>
               </div>
-              <div className="details-strip">
-                <label>Industry<input value={active.industry} onChange={(e) => updateActive((checklist) => ({ ...checklist, industry: e.target.value }))} placeholder="Industry" /></label>
-                <label>Purpose<input value={active.purpose} onChange={(e) => updateActive((checklist) => ({ ...checklist, purpose: e.target.value }))} placeholder="Purpose" /></label>
-                <label>Assigned role<input value={active.assigned_role} onChange={(e) => updateActive((checklist) => ({ ...checklist, assigned_role: e.target.value }))} placeholder="Role" /></label>
-                <label>Frequency<select value={active.frequency} onChange={(e) => updateActive((checklist) => ({ ...checklist, frequency: e.target.value }))}><option>Daily</option><option>Weekly</option><option>Monthly</option><option>Per shift</option><option>As needed</option></select></label>
-                <label>Minutes<input type="number" min="1" value={active.estimated_minutes} onChange={(e) => updateActive((checklist) => ({ ...checklist, estimated_minutes: Number(e.target.value) }))} /></label>
-                <label className="inline-toggle"><input type="checkbox" checked={active.scoring_enabled} onChange={(e) => updateActive((checklist) => ({ ...checklist, scoring_enabled: e.target.checked }))} /> Scoring</label>
+
+              <div className="builder-tabs">
+                <button className={builderTab === 'items' ? 'active' : ''} onClick={() => setBuilderTab('items')}><ListChecks size={16} /> Items</button>
+                <button className={builderTab === 'settings' ? 'active' : ''} onClick={() => setBuilderTab('settings')}><Settings2 size={16} /> Settings</button>
               </div>
-              <div className="builder-grid">
-                <Palette onAdd={addItem} />
-                <ChecklistCanvas
-                  checklist={active}
-                  selectedItemId={selectedItemId}
-                  selectedSectionId={selectedSectionId}
-                  onSelectItem={(sectionId, itemId) => { setSelectedSectionId(sectionId); setSelectedItemId(itemId) }}
-                  onSelectSection={(sectionId) => { setSelectedSectionId(sectionId); setSelectedItemId(null) }}
-                  onAddSection={addSection}
-                  onAddItem={addItem}
-                  onDeleteSection={deleteSection}
-                  onDeleteItem={deleteItem}
-                  onDuplicateItem={duplicateItem}
-                  onMoveItem={moveItem}
-                />
-                <Inspector item={selectedItem} section={selectedSection} onChangeItem={updateSelectedItem} onChangeSection={updateSelectedSection} />
-              </div>
+
+              {builderTab === 'items' ? (
+                <div className="builder-grid video-flow-grid">
+                  <ChecklistCanvas
+                    checklist={active}
+                    selectedItemId={selectedItemId}
+                    selectedSectionId={selectedSectionId}
+                    onSelectItem={(sectionId, itemId) => { setSelectedSectionId(sectionId); setSelectedItemId(itemId) }}
+                    onSelectSection={(sectionId) => { setSelectedSectionId(sectionId); setSelectedItemId(null) }}
+                    onAddSection={addSection}
+                    onOpenItemPicker={openItemPicker}
+                    onAddItem={addItem}
+                    onDeleteSection={deleteSection}
+                    onDeleteItem={deleteItem}
+                    onDuplicateItem={duplicateItem}
+                    onMoveItem={moveItem}
+                  />
+                  <Inspector item={selectedItem} section={selectedSection} checklist={active} checklists={checklists} onChangeItem={updateSelectedItem} onChangeSection={updateSelectedSection} />
+                </div>
+              ) : (
+                <div className="settings-layout"><ChecklistSettings checklist={active} onChange={(patch) => updateActive((checklist) => ({ ...checklist, ...patch }))} /></div>
+              )}
             </>
           ) : (
-            <div className="empty-workspace"><div className="empty-illustration"><Sparkles size={36} /></div><h2>Create your first checklist</h2><p>Start from a blank checklist or let AI generate an operational draft.</p><div><button className="primary" onClick={() => setShowAI(true)}><Sparkles size={17} /> Create with AI</button><button className="secondary" onClick={addBlank}><Plus size={17} /> Blank checklist</button></div></div>
+            <div className="empty-workspace"><div className="empty-illustration"><Sparkles size={36} /></div><h2>Create your first checklist</h2><p>Start from a blank checklist or let AI generate an operational draft.</p><div><button className="primary" onClick={() => setShowAI(true)}><Sparkles size={17} /> Create with AI</button><button className="secondary" onClick={addBlank}><Plus size={17} /> Create Checklist</button></div></div>
           )}
         </section>
       </div>
@@ -339,6 +369,7 @@ export default function App() {
       {notice ? <div className="toast" onClick={() => setNotice('')}>{notice}<ChevronDown size={15} /></div> : null}
       {showAI ? <AIWizard onClose={() => setShowAI(false)} onGenerate={generate} /> : null}
       {showPreview && active ? <PreviewModal checklist={active} onClose={() => setShowPreview(false)} /> : null}
+      {showItemPicker ? <ItemTypeModal onClose={() => setShowItemPicker(false)} onSelect={(type) => addItem(type, pickerSectionId || undefined)} /> : null}
     </div>
   )
 }
