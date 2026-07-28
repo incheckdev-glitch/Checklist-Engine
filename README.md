@@ -60,11 +60,13 @@ Store the OpenAI API key as a Supabase secret. Never put it in the browser `.env
 
 ```bash
 npx supabase secrets set OPENAI_API_KEY=YOUR_OPENAI_API_KEY
-npx supabase secrets set OPENAI_MODEL=gpt-5.6-luna
-npx supabase functions deploy generate-checklist
+npx supabase secrets set OPENAI_MODEL=gpt-5-mini
+npx supabase functions deploy checklist-generator
 ```
 
 `OPENAI_MODEL` is configurable. Change it to a structured-output-capable model available in your OpenAI project when needed.
+
+The application invokes the deployed endpoint named `checklist-generator`.
 
 ## 4. Authentication
 
@@ -121,7 +123,7 @@ The function uses a strict JSON schema and returns a structured checklist draft.
 npm run typecheck
 npm run build
 npx supabase start
-npx supabase functions serve generate-checklist --env-file supabase/functions/.env
+npx supabase functions serve checklist-generator --env-file supabase/functions/.env
 npx supabase db reset
 ```
 
