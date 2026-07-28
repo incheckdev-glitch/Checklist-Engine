@@ -3,6 +3,7 @@ import { createClient } from '@supabase/supabase-js'
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
   'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
+  'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
 }
 
 const supportedTypes = [
@@ -12,120 +13,8 @@ const supportedTypes = [
   'sub_checklist',
 ] as const
 
-const configProperties = {
-  unit: { type: ['string', 'null'] },
-  decimal_places: { type: ['integer', 'null'] },
-  normal_min: { type: ['number', 'null'] },
-  normal_max: { type: ['number', 'null'] },
-  warning_min: { type: ['number', 'null'] },
-  warning_max: { type: ['number', 'null'] },
-  critical_min: { type: ['number', 'null'] },
-  critical_max: { type: ['number', 'null'] },
-  compliant_value: { type: ['boolean', 'null'] },
-  options: { type: ['array', 'null'], items: { type: 'string' } },
-  failure_options: { type: ['array', 'null'], items: { type: 'string' } },
-  allow_multiple: { type: ['boolean', 'null'] },
-  min_files: { type: ['integer', 'null'] },
-  max_files: { type: ['integer', 'null'] },
-  camera_only: { type: ['boolean', 'null'] },
-  min: { type: ['number', 'null'] },
-  max: { type: ['number', 'null'] },
-  step: { type: ['number', 'null'] },
-  pass_threshold: { type: ['number', 'null'] },
-  expression: { type: ['string', 'null'] },
-  display_unit: { type: ['string', 'null'] },
-  expected_code: { type: ['string', 'null'] },
-  duplicate_prevention: { type: ['boolean', 'null'] },
-  default_now: { type: ['boolean', 'null'] },
-  default_today: { type: ['boolean', 'null'] },
-  min_seconds: { type: ['integer', 'null'] },
-  max_seconds: { type: ['integer', 'null'] },
-  min_length: { type: ['integer', 'null'] },
-  max_length: { type: ['integer', 'null'] },
-  signer_role: { type: ['string', 'null'] },
-  checklist_id: { type: ['string', 'null'] },
-  independent_scoring: { type: ['boolean', 'null'] },
-  checked_label: { type: ['string', 'null'] },
-  level: { type: ['integer', 'null'] },
-} as const
-
-const checklistSchema = {
-  type: 'object',
-  additionalProperties: false,
-  required: [
-    'name', 'description', 'industry', 'purpose', 'assigned_role', 'frequency',
-    'estimated_minutes', 'scoring_enabled', 'sections',
-  ],
-  properties: {
-    name: { type: 'string', minLength: 1, maxLength: 180 },
-    description: { type: 'string', maxLength: 2000 },
-    industry: { type: 'string', maxLength: 120 },
-    purpose: { type: 'string', maxLength: 180 },
-    assigned_role: { type: 'string', maxLength: 120 },
-    frequency: { type: 'string', maxLength: 80 },
-    estimated_minutes: { type: 'integer', minimum: 1, maximum: 180 },
-    scoring_enabled: { type: 'boolean' },
-    sections: {
-      type: 'array',
-      minItems: 1,
-      maxItems: 15,
-      items: {
-        type: 'object',
-        additionalProperties: false,
-        required: ['title', 'instructions', 'items'],
-        properties: {
-          title: { type: 'string', minLength: 1, maxLength: 180 },
-          instructions: { type: 'string', maxLength: 1000 },
-          items: {
-            type: 'array',
-            minItems: 1,
-            maxItems: 30,
-            items: {
-              type: 'object',
-              additionalProperties: false,
-              required: [
-                'type', 'label', 'description', 'required', 'weight', 'critical', 'allow_na',
-                'config', 'conditions', 'corrective_action',
-              ],
-              properties: {
-                type: { type: 'string', enum: supportedTypes },
-                label: { type: 'string', minLength: 1, maxLength: 500 },
-                description: { type: 'string', maxLength: 1000 },
-                required: { type: 'boolean' },
-                weight: { type: 'number', minimum: 0, maximum: 100 },
-                critical: { type: 'boolean' },
-                allow_na: { type: 'boolean' },
-                config: {
-                  type: 'object',
-                  additionalProperties: false,
-                  required: Object.keys(configProperties),
-                  properties: configProperties,
-                },
-                conditions: {
-                  type: 'array',
-                  maxItems: 0,
-                  items: { type: 'string' },
-                },
-                corrective_action: {
-                  type: 'object',
-                  additionalProperties: false,
-                  required: ['enabled', 'trigger', 'require_comment', 'require_picture', 'assign_role'],
-                  properties: {
-                    enabled: { type: 'boolean' },
-                    trigger: { type: 'string', enum: ['failed', 'warning', 'critical', 'always'] },
-                    require_comment: { type: 'boolean' },
-                    require_picture: { type: 'boolean' },
-                    assign_role: { type: 'string' },
-                  },
-                },
-              },
-            },
-          },
-        },
-      },
-    },
-  },
-} as const
+type ItemType = typeof supportedTypes[number]
+type JsonRecord = Record<string, unknown>
 
 type GenerationRequest = {
   description: string
@@ -139,6 +28,16 @@ type GenerationRequest = {
   source_text?: string
 }
 
+const allowedConfigKeys = new Set([
+  'unit', 'decimal_places', 'normal_min', 'normal_max', 'warning_min', 'warning_max',
+  'critical_min', 'critical_max', 'compliant_value', 'options', 'failure_options',
+  'allow_multiple', 'min_files', 'max_files', 'camera_only', 'min', 'max', 'step',
+  'pass_threshold', 'expression', 'display_unit', 'expected_code',
+  'duplicate_prevention', 'default_now', 'default_today', 'min_seconds',
+  'max_seconds', 'min_length', 'max_length', 'signer_role', 'checklist_id',
+  'independent_scoring', 'checked_label', 'level',
+])
+
 function jsonResponse(body: unknown, status = 200): Response {
   return new Response(JSON.stringify(body), {
     status,
@@ -146,39 +45,189 @@ function jsonResponse(body: unknown, status = 200): Response {
   })
 }
 
-function extractOutputText(response: Record<string, unknown>): string {
+function isRecord(value: unknown): value is JsonRecord {
+  return Boolean(value) && typeof value === 'object' && !Array.isArray(value)
+}
+
+function asString(value: unknown, fallback = '', maxLength = 2000): string {
+  return typeof value === 'string' ? value.trim().slice(0, maxLength) : fallback
+}
+
+function asBoolean(value: unknown, fallback = false): boolean {
+  return typeof value === 'boolean' ? value : fallback
+}
+
+function asNumber(value: unknown, fallback = 0, min = -1_000_000, max = 1_000_000): number {
+  const number = typeof value === 'number' ? value : Number(value)
+  if (!Number.isFinite(number)) return fallback
+  return Math.min(max, Math.max(min, number))
+}
+
+function asInteger(value: unknown, fallback = 0, min = -1_000_000, max = 1_000_000): number {
+  return Math.round(asNumber(value, fallback, min, max))
+}
+
+function normalizeConfig(value: unknown): JsonRecord {
+  if (!isRecord(value)) return {}
+
+  const normalized: JsonRecord = {}
+  for (const [key, entry] of Object.entries(value)) {
+    if (!allowedConfigKeys.has(key) || entry === null || entry === undefined) continue
+
+    if (key === 'options' || key === 'failure_options') {
+      if (Array.isArray(entry)) {
+        normalized[key] = entry
+          .filter((option): option is string => typeof option === 'string')
+          .map((option) => option.trim())
+          .filter(Boolean)
+          .slice(0, 30)
+      }
+      continue
+    }
+
+    if (typeof entry === 'string') normalized[key] = entry.slice(0, 1000)
+    else if (typeof entry === 'number' && Number.isFinite(entry)) normalized[key] = entry
+    else if (typeof entry === 'boolean') normalized[key] = entry
+  }
+  return normalized
+}
+
+function normalizeCorrectiveAction(value: unknown, assignedRole: string): JsonRecord | null {
+  if (!isRecord(value) || value.enabled === false) return null
+
+  const trigger = ['failed', 'warning', 'critical', 'always'].includes(String(value.trigger))
+    ? String(value.trigger)
+    : 'failed'
+
+  return {
+    enabled: true,
+    trigger,
+    require_comment: asBoolean(value.require_comment, true),
+    require_picture: asBoolean(value.require_picture, false),
+    assign_role: asString(value.assign_role, assignedRole, 120),
+  }
+}
+
+function normalizeChecklist(value: unknown, request: GenerationRequest): JsonRecord {
+  if (!isRecord(value)) throw new Error('OpenAI returned an invalid checklist object.')
+
+  const assignedRole = asString(value.assigned_role, request.assigned_role || '', 120)
+  const rawSections = Array.isArray(value.sections) ? value.sections : []
+
+  const sections = rawSections
+    .filter(isRecord)
+    .slice(0, 12)
+    .map((section, sectionIndex) => {
+      const rawItems = Array.isArray(section.items) ? section.items : []
+      const items = rawItems
+        .filter(isRecord)
+        .slice(0, 25)
+        .map((item, itemIndex) => {
+          const requestedType = String(item.type || '')
+          const type: ItemType = supportedTypes.includes(requestedType as ItemType)
+            ? requestedType as ItemType
+            : 'yes_no'
+
+          const nonScored = [
+            'title', 'instructions', 'picture', 'video', 'signature', 'date', 'time',
+            'date_time', 'staff_member', 'formula',
+          ].includes(type)
+
+          return {
+            type,
+            label: asString(item.label, `Checklist item ${itemIndex + 1}`, 500),
+            description: asString(item.description, '', 1000),
+            required: asBoolean(item.required, !['title', 'instructions', 'formula'].includes(type)),
+            weight: nonScored ? 0 : asNumber(item.weight, 5, 0, 100),
+            critical: asBoolean(item.critical, false),
+            allow_na: asBoolean(item.allow_na, false),
+            config: normalizeConfig(item.config),
+            conditions: [],
+            corrective_action: normalizeCorrectiveAction(item.corrective_action, assignedRole),
+          }
+        })
+
+      return {
+        title: asString(section.title, `Section ${sectionIndex + 1}`, 180),
+        instructions: asString(section.instructions, '', 1000),
+        items,
+      }
+    })
+    .filter((section) => section.items.length > 0)
+
+  if (!sections.length) throw new Error('OpenAI returned a checklist without usable sections or items.')
+
+  return {
+    name: asString(value.name, request.purpose ? `${request.purpose} Checklist` : 'AI Generated Checklist', 180),
+    description: asString(value.description, request.description, 2000),
+    industry: asString(value.industry, request.industry || '', 120),
+    purpose: asString(value.purpose, request.purpose || '', 180),
+    assigned_role: assignedRole,
+    frequency: asString(value.frequency, request.frequency || 'As needed', 80),
+    estimated_minutes: asInteger(value.estimated_minutes, request.estimated_minutes || 10, 1, 180),
+    scoring_enabled: asBoolean(value.scoring_enabled, request.scoring_enabled !== false),
+    sections,
+  }
+}
+
+function extractOutputText(response: JsonRecord): string {
   const output = Array.isArray(response.output) ? response.output : []
   for (const outputItem of output) {
-    if (!outputItem || typeof outputItem !== 'object') continue
-    const content = Array.isArray((outputItem as Record<string, unknown>).content)
-      ? (outputItem as Record<string, unknown>).content as Array<Record<string, unknown>>
-      : []
+    if (!isRecord(outputItem)) continue
+    const content = Array.isArray(outputItem.content) ? outputItem.content : []
     for (const contentItem of content) {
-      if (contentItem.type === 'output_text' && typeof contentItem.text === 'string') return contentItem.text
+      if (isRecord(contentItem) && contentItem.type === 'output_text' && typeof contentItem.text === 'string') {
+        return contentItem.text
+      }
+      if (isRecord(contentItem) && contentItem.type === 'refusal' && typeof contentItem.refusal === 'string') {
+        throw new Error(contentItem.refusal)
+      }
     }
   }
-  throw new Error('OpenAI returned no structured output text.')
+  throw new Error('OpenAI returned no checklist output.')
+}
+
+function getOpenAIError(response: JsonRecord): string {
+  if (isRecord(response.error)) {
+    return asString(response.error.message, 'OpenAI request failed.', 1000)
+  }
+  return 'OpenAI request failed.'
 }
 
 Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') return new Response('ok', { headers: corsHeaders })
-  if (req.method !== 'POST') return jsonResponse({ error: 'Method not allowed.' }, 405)
 
   const supabaseUrl = Deno.env.get('SUPABASE_URL')
   const supabaseAnonKey = Deno.env.get('SUPABASE_ANON_KEY')
   const openAIKey = Deno.env.get('OPENAI_API_KEY')
-  const model = Deno.env.get('OPENAI_MODEL') || 'gpt-5.6-luna'
+  const model = Deno.env.get('OPENAI_MODEL') || 'gpt-5-mini'
   const authorization = req.headers.get('Authorization')
 
-  if (!supabaseUrl || !supabaseAnonKey) return jsonResponse({ error: 'Supabase environment is incomplete.' }, 500)
-  if (!openAIKey) return jsonResponse({ error: 'OPENAI_API_KEY secret is not configured.' }, 500)
+  if (req.method === 'GET') {
+    return jsonResponse({
+      ok: true,
+      function: 'checklist-generator',
+      openai_configured: Boolean(openAIKey),
+      model,
+    })
+  }
+  if (req.method !== 'POST') return jsonResponse({ error: 'Method not allowed.' }, 405)
+
+  if (!supabaseUrl || !supabaseAnonKey) {
+    return jsonResponse({ error: 'Supabase environment is incomplete.' }, 500)
+  }
+  if (!openAIKey) {
+    return jsonResponse({ error: 'OPENAI_API_KEY secret is not configured.' }, 500)
+  }
   if (!authorization) return jsonResponse({ error: 'Authorization is required.' }, 401)
 
   const supabase = createClient(supabaseUrl, supabaseAnonKey, {
     global: { headers: { Authorization: authorization } },
   })
   const { data: userData, error: userError } = await supabase.auth.getUser()
-  if (userError || !userData.user) return jsonResponse({ error: 'Invalid authenticated user.' }, 401)
+  if (userError || !userData.user) {
+    return jsonResponse({ error: 'Invalid or expired authenticated user session.' }, 401)
+  }
 
   let body: GenerationRequest
   try {
@@ -187,33 +236,87 @@ Deno.serve(async (req) => {
     return jsonResponse({ error: 'Request body must be valid JSON.' }, 400)
   }
 
-  if (!body.description?.trim()) return jsonResponse({ error: 'Checklist description is required.' }, 400)
+  if (!body.description?.trim()) {
+    return jsonResponse({ error: 'Checklist description is required.' }, 400)
+  }
   if (body.description.length > 6000 || (body.source_text?.length || 0) > 30000) {
     return jsonResponse({ error: 'The description or source text is too long.' }, 400)
   }
 
   const systemPrompt = `
 You are an operational compliance checklist architect for InCheck 360.
-Create a complete, practical, frontline-ready checklist using only these item types:
+Return one valid JSON object only. Do not use markdown or code fences.
+
+Use this exact structure:
+{
+  "name": "string",
+  "description": "string",
+  "industry": "string",
+  "purpose": "string",
+  "assigned_role": "string",
+  "frequency": "string",
+  "estimated_minutes": 10,
+  "scoring_enabled": true,
+  "sections": [
+    {
+      "title": "string",
+      "instructions": "string",
+      "items": [
+        {
+          "type": "one supported type",
+          "label": "string",
+          "description": "string",
+          "required": true,
+          "weight": 5,
+          "critical": false,
+          "allow_na": false,
+          "config": {},
+          "corrective_action": null
+        }
+      ]
+    }
+  ]
+}
+
+Supported item types:
 ${supportedTypes.join(', ')}.
 
+Only add configuration keys that apply to the selected item:
+- measurement: unit, decimal_places, normal_min, normal_max, warning_min, warning_max, critical_min, critical_max
+- yes_no: compliant_value
+- multiple_choice: options, failure_options, allow_multiple
+- picture/video: min_files, max_files, camera_only
+- rating: min, max, step, pass_threshold
+- formula: expression, display_unit
+- qr/barcode: expected_code, duplicate_prevention
+- date_time: default_now
+- date: default_today
+- stopwatch: min_seconds, max_seconds
+- short_entry/long_entry: min_length, max_length
+- signature: signer_role
+- sub_checklist: checklist_id, independent_scoring
+- checkmark: checked_label
+- title: level
+
+Corrective action object when needed:
+{
+  "enabled": true,
+  "trigger": "failed | warning | critical | always",
+  "require_comment": true,
+  "require_picture": false,
+  "assign_role": "string"
+}
+
 Mandatory design rules:
-- Begin with useful identification/context fields, then operational sections, then review/approval.
-- Do not make every item yes/no. Use measurement for values and ranges, media only for valuable evidence,
+- Create no more than 8 sections and no more than 24 total items.
+- Begin with identification/context, continue with operational checks, and finish with review/approval.
+- Do not make every item yes/no. Use measurements for numeric ranges, media only for useful evidence,
   staff_member for accountability, signature only for formal approval, and sub_checklist for repeated processes.
-- Use clear action-oriented labels. Avoid duplicated, vague, or compound questions.
-- Mark only truly high-risk items as critical.
-- For failed or out-of-range operational items, add an appropriate corrective_action rule.
-- For measurement config include relevant unit, decimal_places, normal_min, normal_max, warning_min, and warning_max.
-- For multiple_choice config include options, allow_multiple, and failure_options.
-- For ratings include min, max, step, and pass_threshold.
-- For media include min_files, max_files, and camera_only.
-- For yes_no include compliant_value.
-- For formula use an expression such as weighted_pass_percentage().
-- Conditions may be empty because item IDs are assigned by the application after generation.
-- Non-scored information/evidence/signature items should have weight 0.
-- Keep the full checklist realistic for the target completion time.
-- Return only the structured checklist object.
+- Keep labels concise, action-oriented, and free of duplicates.
+- Mark only genuinely high-risk items as critical.
+- Add corrective actions to failed or out-of-range operational items.
+- Non-scored information, evidence, formula, and signature items must have weight 0.
+- Keep the checklist realistic for the requested completion time.
 `.trim()
 
   const userPrompt = `
@@ -243,27 +346,35 @@ ${body.source_text?.trim() ? `Source SOP/procedure text:\n${body.source_text.tri
           { role: 'user', content: [{ type: 'input_text', text: userPrompt }] },
         ],
         text: {
-          format: {
-            type: 'json_schema',
-            name: 'incheck_checklist',
-            strict: true,
-            schema: checklistSchema,
-          },
+          format: { type: 'json_object' },
         },
-        max_output_tokens: 12000,
+        max_output_tokens: 30000,
       }),
     })
 
-    const openAIJson = await openAIResponse.json() as Record<string, unknown>
-    if (!openAIResponse.ok) {
-      const apiError = typeof openAIJson.error === 'object' && openAIJson.error
-        ? String((openAIJson.error as Record<string, unknown>).message || 'OpenAI request failed.')
-        : 'OpenAI request failed.'
-      throw new Error(apiError)
+    const openAIJson = await openAIResponse.json() as JsonRecord
+    if (!openAIResponse.ok) throw new Error(getOpenAIError(openAIJson))
+
+    if (openAIJson.status === 'incomplete') {
+      const reason = isRecord(openAIJson.incomplete_details)
+        ? asString(openAIJson.incomplete_details.reason, 'unknown reason', 100)
+        : 'unknown reason'
+      throw new Error(
+        `OpenAI returned an incomplete checklist (${reason}). Retry with a shorter SOP or a shorter requested checklist.`,
+      )
+    }
+    if (openAIJson.status === 'failed') throw new Error(getOpenAIError(openAIJson))
+
+    const outputText = extractOutputText(openAIJson).trim()
+    let rawChecklist: unknown
+    try {
+      rawChecklist = JSON.parse(outputText)
+    } catch (parseError) {
+      const detail = parseError instanceof Error ? parseError.message : 'Invalid JSON.'
+      throw new Error(`OpenAI returned incomplete or invalid JSON: ${detail}. Please retry.`)
     }
 
-    const outputText = extractOutputText(openAIJson)
-    const checklist = JSON.parse(outputText) as Record<string, unknown>
+    const checklist = normalizeChecklist(rawChecklist, body)
 
     await supabase.from('ai_generation_logs').insert({
       user_id: userData.user.id,
