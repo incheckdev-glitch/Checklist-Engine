@@ -210,29 +210,30 @@ export async function publishChecklist(id: string, notes: string): Promise<numbe
   return Number(data)
 }
 
-async function getFunctionErrorMessage(error: unknown): Promise<string> {
-  const fallback = error instanceof Error ? error.message : 'Failed to call the checklist generator.'
-  if (!error || typeof error !== 'object') return fallback
+type GeneratorApiResponse = {
+  status?: string
+  response_id?: string
+  checklist?: GeneratedChecklist
+  error?: string
+  message?: string
+}
 
-  const context = (error as { context?: unknown }).context
-  if (!(context instanceof Response)) return fallback
+function wait(milliseconds: number): Promise<void> {
+  return new Promise((resolve) => window.setTimeout(resolve, milliseconds))
+}
 
-  try {
-    const response = context.clone()
-    const contentType = response.headers.get('content-type') || ''
-    if (contentType.includes('application/json')) {
-      const body = await response.json() as { error?: unknown; message?: unknown }
-      const message = body.error ?? body.message
-      if (typeof message === 'string' && message.trim()) return message
-    }
-
-    const text = await context.clone().text()
-    if (text.trim()) return text
-  } catch {
-    // Fall back to the Supabase client error message.
+async function readGeneratorResponse(response: Response): Promise<GeneratorApiResponse> {
+  const contentType = response.headers.get('content-type') || ''
+  if (contentType.includes('application/json')) {
+    return await response.json() as GeneratorApiResponse
   }
 
-  return fallback
+  const text = await response.text()
+  return { error: text || `Generator request failed with status ${response.status}.` }
+}
+
+function generatorError(body: GeneratorApiResponse, fallback: string): Error {
+  return new Error(body.error || body.message || fallback)
 }
 
 export async function generateChecklist(request: GenerationRequest): Promise<GeneratedChecklist> {
@@ -240,17 +241,43 @@ export async function generateChecklist(request: GenerationRequest): Promise<Gen
 
   const { data: sessionData, error: sessionError } = await supabase.auth.getSession()
   if (sessionError) throw sessionError
-  if (!sessionData.session) throw new Error('Your session has expired. Sign in again and retry.')
+  const accessToken = sessionData.session?.access_token
+  if (!accessToken) throw new Error('Your session has expired. Sign in again and retry.')
 
-  const { data, error } = await supabase.functions.invoke('checklist-generator', {
-    body: request,
+  const startResponse = await fetch('/api/checklist-generator', {
+    method: 'POST',
     headers: {
-      Authorization: `Bearer ${sessionData.session.access_token}`,
+      Authorization: `Bearer ${accessToken}`,
+      'Content-Type': 'application/json',
     },
+    body: JSON.stringify(request),
   })
-  if (error) throw new Error(await getFunctionErrorMessage(error))
-  if (!data?.checklist) throw new Error(data?.error || 'The AI function returned an invalid checklist.')
-  return data.checklist as GeneratedChecklist
+  const startBody = await readGeneratorResponse(startResponse)
+  if (!startResponse.ok) throw generatorError(startBody, 'Unable to start AI checklist generation.')
+  if (startBody.checklist) return startBody.checklist
+  if (!startBody.response_id) throw new Error('The AI generator did not return a response ID.')
+
+  const responseId = startBody.response_id
+  const startedAt = Date.now()
+  const maximumWaitMs = 10 * 60 * 1000
+
+  while (Date.now() - startedAt < maximumWaitMs) {
+    await wait(2500)
+
+    const pollResponse = await fetch(`/api/checklist-generator?id=${encodeURIComponent(responseId)}`, {
+      method: 'GET',
+      headers: { Authorization: `Bearer ${accessToken}` },
+      cache: 'no-store',
+    })
+    const pollBody = await readGeneratorResponse(pollResponse)
+
+    if (pollResponse.status === 202 || ['queued', 'in_progress'].includes(pollBody.status || '')) continue
+    if (!pollResponse.ok) throw generatorError(pollBody, 'AI checklist generation failed.')
+    if (pollBody.checklist) return pollBody.checklist
+    throw new Error('The AI generator completed without returning a checklist.')
+  }
+
+  throw new Error('AI checklist generation is still running after 10 minutes. Please retry.')
 }
 
 export function blankChecklist(): Checklist {
