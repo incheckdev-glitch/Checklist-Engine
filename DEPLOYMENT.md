@@ -5,8 +5,8 @@
 3. Run `npx supabase db push`.
 4. Configure email authentication.
 5. Run `npx supabase secrets set OPENAI_API_KEY=...`.
-6. Optionally set `OPENAI_MODEL`.
-7. Deploy with `npx supabase functions deploy generate-checklist`.
+6. Set `npx supabase secrets set OPENAI_MODEL=gpt-5-mini`.
+7. Deploy with `npx supabase functions deploy checklist-generator`.
 8. Copy `.env.example` to `.env` and add the Supabase URL and anonymous key.
 9. Run `npm run build`.
 10. Deploy `dist/` and add the two `VITE_` environment variables to the host.
