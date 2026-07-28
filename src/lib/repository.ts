@@ -210,11 +210,46 @@ export async function publishChecklist(id: string, notes: string): Promise<numbe
   return Number(data)
 }
 
+async function getFunctionErrorMessage(error: unknown): Promise<string> {
+  const fallback = error instanceof Error ? error.message : 'Failed to call the checklist generator.'
+  if (!error || typeof error !== 'object') return fallback
+
+  const context = (error as { context?: unknown }).context
+  if (!(context instanceof Response)) return fallback
+
+  try {
+    const response = context.clone()
+    const contentType = response.headers.get('content-type') || ''
+    if (contentType.includes('application/json')) {
+      const body = await response.json() as { error?: unknown; message?: unknown }
+      const message = body.error ?? body.message
+      if (typeof message === 'string' && message.trim()) return message
+    }
+
+    const text = await context.clone().text()
+    if (text.trim()) return text
+  } catch {
+    // Fall back to the Supabase client error message.
+  }
+
+  return fallback
+}
+
 export async function generateChecklist(request: GenerationRequest): Promise<GeneratedChecklist> {
   if (!isSupabaseConfigured || !supabase) return generateDemoChecklist(request)
-  const { data, error } = await supabase.functions.invoke('generate-checklist', { body: request })
-  if (error) throw error
-  if (!data?.checklist) throw new Error('The AI function returned an invalid checklist.')
+
+  const { data: sessionData, error: sessionError } = await supabase.auth.getSession()
+  if (sessionError) throw sessionError
+  if (!sessionData.session) throw new Error('Your session has expired. Sign in again and retry.')
+
+  const { data, error } = await supabase.functions.invoke('checklist-generator', {
+    body: request,
+    headers: {
+      Authorization: `Bearer ${sessionData.session.access_token}`,
+    },
+  })
+  if (error) throw new Error(await getFunctionErrorMessage(error))
+  if (!data?.checklist) throw new Error(data?.error || 'The AI function returned an invalid checklist.')
   return data.checklist as GeneratedChecklist
 }
 
