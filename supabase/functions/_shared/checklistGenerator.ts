@@ -1,5 +1,3 @@
-import { createClient } from '@supabase/supabase-js'
-
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
   'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
@@ -28,15 +26,6 @@ type GenerationRequest = {
   source_text?: string
 }
 
-const allowedConfigKeys = new Set([
-  'unit', 'decimal_places', 'normal_min', 'normal_max', 'warning_min', 'warning_max',
-  'critical_min', 'critical_max', 'compliant_value', 'options', 'failure_options',
-  'allow_multiple', 'min_files', 'max_files', 'camera_only', 'min', 'max', 'step',
-  'pass_threshold', 'expression', 'display_unit', 'expected_code', 'duplicate_prevention',
-  'default_now', 'default_today', 'min_seconds', 'max_seconds', 'min_length', 'max_length',
-  'signer_role', 'checklist_id', 'independent_scoring', 'checked_label', 'level',
-])
-
 function jsonResponse(body: unknown, status = 200): Response {
   return new Response(JSON.stringify(body), {
     status,
@@ -48,162 +37,131 @@ function isRecord(value: unknown): value is JsonRecord {
   return Boolean(value) && typeof value === 'object' && !Array.isArray(value)
 }
 
-function asString(value: unknown, fallback = '', maxLength = 2000): string {
-  return typeof value === 'string' ? value.trim().slice(0, maxLength) : fallback
+function text(value: unknown, fallback = '', max = 1000): string {
+  return typeof value === 'string' ? value.trim().slice(0, max) : fallback
 }
 
-function asBoolean(value: unknown, fallback = false): boolean {
+function bool(value: unknown, fallback = false): boolean {
   return typeof value === 'boolean' ? value : fallback
 }
 
-function asNumber(value: unknown, fallback = 0, min = -1_000_000, max = 1_000_000): number {
-  const number = typeof value === 'number' ? value : Number(value)
-  if (!Number.isFinite(number)) return fallback
-  return Math.min(max, Math.max(min, number))
-}
-
-function asInteger(value: unknown, fallback = 0, min = -1_000_000, max = 1_000_000): number {
-  return Math.round(asNumber(value, fallback, min, max))
+function numberValue(value: unknown, fallback: number, min: number, max: number): number {
+  const parsed = typeof value === 'number' ? value : Number(value)
+  return Number.isFinite(parsed) ? Math.min(max, Math.max(min, parsed)) : fallback
 }
 
 function normalizeConfig(value: unknown): JsonRecord {
   if (!isRecord(value)) return {}
+  const result: JsonRecord = {}
+  const allowed = [
+    'unit', 'decimal_places', 'normal_min', 'normal_max', 'warning_min', 'warning_max',
+    'critical_min', 'critical_max', 'compliant_value', 'options', 'failure_options',
+    'allow_multiple', 'min_files', 'max_files', 'camera_only', 'min', 'max', 'step',
+    'pass_threshold', 'expression', 'display_unit', 'expected_code', 'duplicate_prevention',
+    'default_now', 'default_today', 'min_seconds', 'max_seconds', 'min_length', 'max_length',
+    'signer_role', 'checklist_id', 'independent_scoring', 'checked_label', 'level',
+  ]
 
-  const normalized: JsonRecord = {}
-  for (const [key, entry] of Object.entries(value)) {
-    if (!allowedConfigKeys.has(key) || entry === null || entry === undefined) continue
-
-    if (key === 'options' || key === 'failure_options') {
-      if (Array.isArray(entry)) {
-        normalized[key] = entry
-          .filter((option): option is string => typeof option === 'string')
-          .map((option) => option.trim())
-          .filter(Boolean)
-          .slice(0, 20)
-      }
-      continue
+  for (const key of allowed) {
+    const entry = value[key]
+    if (entry === null || entry === undefined) continue
+    if (Array.isArray(entry)) {
+      result[key] = entry.filter((item) => typeof item === 'string').slice(0, 15)
+    } else if (typeof entry === 'string') {
+      result[key] = entry.slice(0, 500)
+    } else if (typeof entry === 'number' && Number.isFinite(entry)) {
+      result[key] = entry
+    } else if (typeof entry === 'boolean') {
+      result[key] = entry
     }
-
-    if (typeof entry === 'string') normalized[key] = entry.slice(0, 500)
-    else if (typeof entry === 'number' && Number.isFinite(entry)) normalized[key] = entry
-    else if (typeof entry === 'boolean') normalized[key] = entry
   }
-  return normalized
-}
-
-function normalizeCorrectiveAction(value: unknown, assignedRole: string): JsonRecord | null {
-  if (!isRecord(value) || value.enabled === false) return null
-
-  const trigger = ['failed', 'warning', 'critical', 'always'].includes(String(value.trigger))
-    ? String(value.trigger)
-    : 'failed'
-
-  return {
-    enabled: true,
-    trigger,
-    require_comment: asBoolean(value.require_comment, true),
-    require_picture: asBoolean(value.require_picture, false),
-    assign_role: asString(value.assign_role, assignedRole, 120),
-  }
+  return result
 }
 
 function normalizeChecklist(value: unknown, request: GenerationRequest): JsonRecord {
   if (!isRecord(value)) throw new Error('OpenAI returned an invalid checklist object.')
 
-  const assignedRole = asString(value.assigned_role, request.assigned_role || '', 120)
-  const rawSections = Array.isArray(value.sections) ? value.sections : []
+  const assignedRole = text(value.assigned_role, request.assigned_role || '', 120)
   const sections: JsonRecord[] = []
-  let remainingItems = 18
+  const rawSections = Array.isArray(value.sections) ? value.sections : []
+  let remainingItems = 12
 
-  for (let sectionIndex = 0; sectionIndex < rawSections.length && sections.length < 6 && remainingItems > 0; sectionIndex += 1) {
-    const rawSection = rawSections[sectionIndex]
+  for (const rawSection of rawSections) {
+    if (sections.length >= 4 || remainingItems <= 0) break
     if (!isRecord(rawSection)) continue
 
-    const rawItems = Array.isArray(rawSection.items) ? rawSection.items : []
     const items: JsonRecord[] = []
+    const rawItems = Array.isArray(rawSection.items) ? rawSection.items : []
 
-    for (let itemIndex = 0; itemIndex < rawItems.length && remainingItems > 0; itemIndex += 1) {
-      const item = rawItems[itemIndex]
-      if (!isRecord(item)) continue
+    for (const rawItem of rawItems) {
+      if (remainingItems <= 0) break
+      if (!isRecord(rawItem)) continue
 
-      const requestedType = String(item.type || '')
+      const requestedType = String(rawItem.type || '')
       const type: ItemType = supportedTypes.includes(requestedType as ItemType)
         ? requestedType as ItemType
         : 'yes_no'
-
       const nonScored = [
         'title', 'instructions', 'picture', 'video', 'signature', 'date', 'time',
         'date_time', 'staff_member', 'formula',
       ].includes(type)
 
+      let correctiveAction: JsonRecord | null = null
+      if (isRecord(rawItem.corrective_action) && rawItem.corrective_action.enabled !== false) {
+        const trigger = ['failed', 'warning', 'critical', 'always'].includes(String(rawItem.corrective_action.trigger))
+          ? String(rawItem.corrective_action.trigger)
+          : 'failed'
+        correctiveAction = {
+          enabled: true,
+          trigger,
+          require_comment: bool(rawItem.corrective_action.require_comment, true),
+          require_picture: bool(rawItem.corrective_action.require_picture, false),
+          assign_role: text(rawItem.corrective_action.assign_role, assignedRole, 120),
+        }
+      }
+
       items.push({
         type,
-        label: asString(item.label, `Checklist item ${itemIndex + 1}`, 350),
-        description: asString(item.description, '', 600),
-        required: asBoolean(item.required, !['title', 'instructions', 'formula'].includes(type)),
-        weight: nonScored ? 0 : asNumber(item.weight, 5, 0, 100),
-        critical: asBoolean(item.critical, false),
-        allow_na: asBoolean(item.allow_na, false),
-        config: normalizeConfig(item.config),
+        label: text(rawItem.label, `Checklist item ${items.length + 1}`, 350),
+        description: text(rawItem.description, '', 500),
+        required: bool(rawItem.required, !['title', 'instructions', 'formula'].includes(type)),
+        weight: nonScored ? 0 : numberValue(rawItem.weight, 5, 0, 100),
+        critical: bool(rawItem.critical, false),
+        allow_na: bool(rawItem.allow_na, false),
+        config: normalizeConfig(rawItem.config),
         conditions: [],
-        corrective_action: normalizeCorrectiveAction(item.corrective_action, assignedRole),
+        corrective_action: correctiveAction,
       })
       remainingItems -= 1
     }
 
     if (items.length) {
       sections.push({
-        title: asString(rawSection.title, `Section ${sections.length + 1}`, 160),
-        instructions: asString(rawSection.instructions, '', 600),
+        title: text(rawSection.title, `Section ${sections.length + 1}`, 160),
+        instructions: text(rawSection.instructions, '', 400),
         items,
       })
     }
   }
 
-  if (!sections.length) throw new Error('OpenAI returned a checklist without usable sections or items.')
+  if (!sections.length) throw new Error('OpenAI returned no usable checklist sections.')
 
   return {
-    name: asString(value.name, request.purpose ? `${request.purpose} Checklist` : 'AI Generated Checklist', 180),
-    description: asString(value.description, request.description, 1200),
-    industry: asString(value.industry, request.industry || '', 120),
-    purpose: asString(value.purpose, request.purpose || '', 180),
+    name: text(value.name, request.purpose ? `${request.purpose} Checklist` : 'AI Generated Checklist', 180),
+    description: text(value.description, request.description, 1000),
+    industry: text(value.industry, request.industry || '', 120),
+    purpose: text(value.purpose, request.purpose || '', 180),
     assigned_role: assignedRole,
-    frequency: asString(value.frequency, request.frequency || 'As needed', 80),
-    estimated_minutes: asInteger(value.estimated_minutes, request.estimated_minutes || 10, 1, 180),
-    scoring_enabled: asBoolean(value.scoring_enabled, request.scoring_enabled !== false),
+    frequency: text(value.frequency, request.frequency || 'As needed', 80),
+    estimated_minutes: Math.round(numberValue(value.estimated_minutes, request.estimated_minutes || 10, 1, 180)),
+    scoring_enabled: bool(value.scoring_enabled, request.scoring_enabled !== false),
     sections,
   }
-}
-
-function extractOutputText(response: JsonRecord): string {
-  if (typeof response.output_text === 'string' && response.output_text.trim()) return response.output_text
-
-  const output = Array.isArray(response.output) ? response.output : []
-  for (const outputItem of output) {
-    if (!isRecord(outputItem)) continue
-    const content = Array.isArray(outputItem.content) ? outputItem.content : []
-    for (const contentItem of content) {
-      if (isRecord(contentItem) && contentItem.type === 'output_text' && typeof contentItem.text === 'string') {
-        return contentItem.text
-      }
-      if (isRecord(contentItem) && contentItem.type === 'refusal' && typeof contentItem.refusal === 'string') {
-        throw new Error(contentItem.refusal)
-      }
-    }
-  }
-  throw new Error('OpenAI returned no checklist output.')
-}
-
-function getOpenAIError(response: JsonRecord): string {
-  if (isRecord(response.error)) return asString(response.error.message, 'OpenAI request failed.', 1000)
-  return 'OpenAI request failed.'
 }
 
 Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') return new Response('ok', { headers: corsHeaders })
 
-  const supabaseUrl = Deno.env.get('SUPABASE_URL')
-  const supabaseAnonKey = Deno.env.get('SUPABASE_ANON_KEY')
   const openAIKey = Deno.env.get('OPENAI_API_KEY')
   const model = Deno.env.get('OPENAI_CHECKLIST_MODEL')?.trim() || 'gpt-4.1-mini'
   const authorization = req.headers.get('Authorization')
@@ -214,20 +172,12 @@ Deno.serve(async (req) => {
       function: 'checklist-generator',
       openai_configured: Boolean(openAIKey),
       model,
-      timeout_protection_ms: 115000,
+      implementation: 'low-compute',
     })
   }
   if (req.method !== 'POST') return jsonResponse({ error: 'Method not allowed.' }, 405)
-
-  if (!supabaseUrl || !supabaseAnonKey) return jsonResponse({ error: 'Supabase environment is incomplete.' }, 500)
   if (!openAIKey) return jsonResponse({ error: 'OPENAI_API_KEY secret is not configured.' }, 500)
   if (!authorization) return jsonResponse({ error: 'Authorization is required.' }, 401)
-
-  const supabase = createClient(supabaseUrl, supabaseAnonKey, {
-    global: { headers: { Authorization: authorization } },
-  })
-  const { data: userData, error: userError } = await supabase.auth.getUser()
-  if (userError || !userData.user) return jsonResponse({ error: 'Invalid or expired authenticated user session.' }, 401)
 
   let body: GenerationRequest
   try {
@@ -237,132 +187,78 @@ Deno.serve(async (req) => {
   }
 
   if (!body.description?.trim()) return jsonResponse({ error: 'Checklist description is required.' }, 400)
-  if (body.description.length > 5000) return jsonResponse({ error: 'The checklist description is too long.' }, 400)
+  if (body.description.length > 4000) return jsonResponse({ error: 'The checklist description is too long.' }, 400)
 
-  const sourceText = body.source_text?.trim().slice(0, 12000) || ''
-  const systemPrompt = `
-You design operational compliance checklists for InCheck 360.
-Return one compact valid JSON object only. Do not use markdown or code fences.
+  const sourceText = body.source_text?.trim().slice(0, 6000) || ''
+  const prompt = `Create one compact operational checklist as valid JSON only.
 
-Required top-level keys:
-name, description, industry, purpose, assigned_role, frequency, estimated_minutes, scoring_enabled, sections.
+Top-level keys: name, description, industry, purpose, assigned_role, frequency, estimated_minutes, scoring_enabled, sections.
+Each section: title, instructions, items.
+Each item: type, label, description, required, weight, critical, allow_na, config, corrective_action.
+Supported types: ${supportedTypes.join(', ')}.
+Corrective action is null or {"enabled":true,"trigger":"failed","require_comment":true,"require_picture":false,"assign_role":"role"}.
+Use only relevant config values. Maximum 4 sections and 12 total items. Use varied field types, concise labels, and weight 0 for information, media, date/time, staff, formula, and signature fields.
 
-Each section requires: title, instructions, items.
-Each item requires: type, label, description, required, weight, critical, allow_na, config, corrective_action.
-
-Supported item types:
-${supportedTypes.join(', ')}.
-
-Use only relevant config keys:
-measurement: unit, decimal_places, normal_min, normal_max, warning_min, warning_max, critical_min, critical_max
-yes_no: compliant_value
-multiple_choice: options, failure_options, allow_multiple
-picture/video: min_files, max_files, camera_only
-rating: min, max, step, pass_threshold
-formula: expression, display_unit
-qr/barcode: expected_code, duplicate_prevention
-date_time: default_now
-date: default_today
-stopwatch: min_seconds, max_seconds
-short_entry/long_entry: min_length, max_length
-signature: signer_role
-sub_checklist: checklist_id, independent_scoring
-checkmark: checked_label
-title: level
-
-Corrective action is null or:
-{"enabled":true,"trigger":"failed","require_comment":true,"require_picture":false,"assign_role":"role"}
-
-Rules:
-- Maximum 6 sections and 18 total items.
-- Start with identification, continue with operational checks, finish with review/approval.
-- Use varied field types; do not make everything yes/no.
-- Keep labels and descriptions concise.
-- Mark only genuine high-risk items critical.
-- Use weight 0 for information, media, formula, date/time, staff member, and signature items.
-- Add corrective actions only where failure or an out-of-range result needs follow-up.
-`.trim()
-
-  const userPrompt = `
-Checklist request: ${body.description.trim()}
+Request: ${body.description.trim()}
 Industry: ${body.industry || 'Not specified'}
 Purpose: ${body.purpose || 'Not specified'}
 Assigned role: ${body.assigned_role || 'Not specified'}
 Frequency: ${body.frequency || 'As needed'}
-Evidence level: ${body.evidence_level || 'balanced'}
-Scoring enabled: ${body.scoring_enabled !== false}
-Target duration: ${body.estimated_minutes || 10} minutes
-${sourceText ? `Source SOP/procedure text:\n${sourceText}` : ''}
-`.trim()
+Evidence: ${body.evidence_level || 'balanced'}
+Scoring: ${body.scoring_enabled !== false}
+Target minutes: ${body.estimated_minutes || 10}
+${sourceText ? `SOP text:\n${sourceText}` : ''}`
 
   try {
-    const openAIResponse = await fetch('https://api.openai.com/v1/responses', {
+    const response = await fetch('https://api.openai.com/v1/chat/completions', {
       method: 'POST',
       headers: {
         Authorization: `Bearer ${openAIKey}`,
         'Content-Type': 'application/json',
       },
-      signal: AbortSignal.timeout(115000),
+      signal: AbortSignal.timeout(90000),
       body: JSON.stringify({
         model,
-        store: false,
-        input: [
-          { role: 'system', content: [{ type: 'input_text', text: systemPrompt }] },
-          { role: 'user', content: [{ type: 'input_text', text: userPrompt }] },
+        messages: [
+          { role: 'system', content: 'You are an operational checklist architect. Return a single valid JSON object only, without markdown.' },
+          { role: 'user', content: prompt },
         ],
-        text: {
-          format: { type: 'json_object' },
-          verbosity: 'low',
-        },
-        max_output_tokens: 6500,
+        response_format: { type: 'json_object' },
+        temperature: 0.1,
+        max_completion_tokens: 3500,
       }),
     })
 
-    const openAIJson = await openAIResponse.json() as JsonRecord
-    if (!openAIResponse.ok) throw new Error(getOpenAIError(openAIJson))
-
-    if (openAIJson.status === 'incomplete') {
-      const reason = isRecord(openAIJson.incomplete_details)
-        ? asString(openAIJson.incomplete_details.reason, 'unknown reason', 100)
-        : 'unknown reason'
-      throw new Error(`OpenAI returned an incomplete checklist (${reason}). Reduce the SOP length and retry.`)
+    const payload = await response.json() as JsonRecord
+    if (!response.ok) {
+      const errorMessage = isRecord(payload.error)
+        ? text(payload.error.message, 'OpenAI request failed.', 1000)
+        : 'OpenAI request failed.'
+      throw new Error(errorMessage)
     }
-    if (openAIJson.status === 'failed') throw new Error(getOpenAIError(openAIJson))
 
-    const outputText = extractOutputText(openAIJson).trim()
-    let rawChecklist: unknown
+    const choices = Array.isArray(payload.choices) ? payload.choices : []
+    const firstChoice = isRecord(choices[0]) ? choices[0] : null
+    const message = firstChoice && isRecord(firstChoice.message) ? firstChoice.message : null
+    const content = message ? text(message.content, '', 50000) : ''
+    if (!content) throw new Error('OpenAI returned no checklist content.')
+
+    let parsed: unknown
     try {
-      rawChecklist = JSON.parse(outputText)
-    } catch (parseError) {
-      const detail = parseError instanceof Error ? parseError.message : 'Invalid JSON.'
-      throw new Error(`OpenAI returned invalid JSON: ${detail}. Please retry.`)
+      parsed = JSON.parse(content)
+    } catch (error) {
+      const detail = error instanceof Error ? error.message : 'Invalid JSON.'
+      throw new Error(`OpenAI returned invalid JSON: ${detail}`)
     }
 
-    const checklist = normalizeChecklist(rawChecklist, body)
-
-    await supabase.from('ai_generation_logs').insert({
-      user_id: userData.user.id,
-      request_summary: body.description.slice(0, 500),
-      model,
-      status: 'success',
-    })
-
-    return jsonResponse({ checklist, model })
+    return jsonResponse({ checklist: normalizeChecklist(parsed, body), model })
   } catch (error) {
-    const isTimeout = error instanceof DOMException && error.name === 'TimeoutError'
-    const message = isTimeout
-      ? 'AI generation exceeded 115 seconds and was stopped before the Supabase timeout. Please retry with a shorter SOP.'
+    const timedOut = error instanceof DOMException && error.name === 'TimeoutError'
+    const message = timedOut
+      ? 'AI generation exceeded 90 seconds. Retry with a shorter description or SOP.'
       : error instanceof Error
       ? error.message
       : 'Checklist generation failed.'
-
-    await supabase.from('ai_generation_logs').insert({
-      user_id: userData.user.id,
-      request_summary: body.description.slice(0, 500),
-      model,
-      status: 'failed',
-      error_message: message.slice(0, 1000),
-    })
-    return jsonResponse({ error: message }, isTimeout ? 504 : 500)
+    return jsonResponse({ error: message }, timedOut ? 504 : 500)
   }
 })
