@@ -26,26 +26,123 @@ function asNumber(value, fallback, min, max) {
   return Number.isFinite(parsed) ? Math.min(max, Math.max(min, parsed)) : fallback
 }
 
+function id(prefix) {
+  return `${prefix}-${Math.random().toString(36).slice(2, 10)}`
+}
+
+function normalizeCondition(value) {
+  if (!isRecord(value)) return null
+  const operator = ['equals', 'not_equals', 'greater_than', 'less_than', 'contains'].includes(String(value.operator))
+    ? String(value.operator)
+    : 'equals'
+  const action = ['show', 'hide', 'require', 'create_corrective_action'].includes(String(value.action))
+    ? String(value.action)
+    : 'show'
+  return {
+    source_item_id: asText(value.source_item_id, '', 120),
+    operator,
+    value: ['string', 'number', 'boolean'].includes(typeof value.value) ? value.value : '',
+    action,
+  }
+}
+
 function normalizeConfig(value) {
-  if (!isRecord(value)) return {}
-  const result = {}
-  const allowed = [
+  const source = isRecord(value) ? value : {}
+  const result = {
+    mark_as: asText(source.mark_as, '', 180),
+    background_color: /^#[0-9a-f]{6}$/i.test(String(source.background_color || '')) ? String(source.background_color) : '#ffffff',
+    label_tag: asText(source.label_tag, '', 120),
+    visibility: { mode: 'always', match: 'all', conditions: [] },
+    reference_material: null,
+    completion_mode: source.completion_mode === 'auto' ? 'auto' : 'manual',
+    answer_tags: [],
+    correction_measure: {
+      enabled: false,
+      checklist_id: '',
+      optional: false,
+      trigger_answer: '',
+      action: 'do_not_repeat',
+    },
+  }
+
+  if (isRecord(source.visibility)) {
+    const conditions = Array.isArray(source.visibility.conditions)
+      ? source.visibility.conditions.map(normalizeCondition).filter(Boolean).slice(0, 8)
+      : []
+    result.visibility = {
+      mode: source.visibility.mode === 'conditional' && conditions.length ? 'conditional' : 'always',
+      match: source.visibility.match === 'any' ? 'any' : 'all',
+      conditions,
+    }
+  }
+
+  if (isRecord(source.reference_material)) {
+    result.reference_material = {
+      name: asText(source.reference_material.name, 'Reference material', 240),
+      url: asText(source.reference_material.url, '', 1500),
+      display_inline: asBoolean(source.reference_material.display_inline, false),
+    }
+  }
+
+  if (Array.isArray(source.answer_tags)) {
+    result.answer_tags = source.answer_tags.filter(isRecord).slice(0, 10).map((rule) => ({
+      id: asText(rule.id, id('tag'), 120),
+      operator: ['equals', 'not_equals', 'greater_than', 'less_than', 'contains'].includes(String(rule.operator)) ? String(rule.operator) : 'equals',
+      value: ['string', 'number', 'boolean'].includes(typeof rule.value) ? rule.value : '',
+      tag: asText(rule.tag, '', 120),
+    }))
+  }
+
+  if (isRecord(source.correction_measure)) {
+    const action = ['additional_action', 'repeat_item', 'repeat_checklist', 'do_not_repeat'].includes(String(source.correction_measure.action))
+      ? String(source.correction_measure.action)
+      : 'do_not_repeat'
+    result.correction_measure = {
+      enabled: asBoolean(source.correction_measure.enabled, false),
+      checklist_id: asText(source.correction_measure.checklist_id, '', 120),
+      optional: asBoolean(source.correction_measure.optional, false),
+      trigger_answer: asText(source.correction_measure.trigger_answer, '', 250),
+      action,
+    }
+  }
+
+  if (Array.isArray(source.ranges)) {
+    result.ranges = source.ranges.filter(isRecord).slice(0, 10).map((range) => ({
+      id: asText(range.id, id('range'), 120),
+      label: asText(range.label, 'Range', 120),
+      min: range.min === null || range.min === undefined || range.min === '' ? null : asNumber(range.min, 0, -1000000, 1000000),
+      max: range.max === null || range.max === undefined || range.max === '' ? null : asNumber(range.max, 0, -1000000, 1000000),
+      status: ['normal', 'warning', 'critical'].includes(String(range.status)) ? String(range.status) : 'normal',
+    }))
+  }
+
+  if (isRecord(source.input_methods)) {
+    result.input_methods = {
+      manual: asBoolean(source.input_methods.manual, true),
+      temperature_probe: asBoolean(source.input_methods.temperature_probe, false),
+      detector: asBoolean(source.input_methods.detector, false),
+    }
+  }
+
+  const primitiveKeys = [
     'unit', 'decimal_places', 'normal_min', 'normal_max', 'warning_min', 'warning_max',
     'critical_min', 'critical_max', 'compliant_value', 'options', 'failure_options',
-    'allow_multiple', 'min_files', 'max_files', 'camera_only', 'min', 'max', 'step',
-    'pass_threshold', 'expression', 'display_unit', 'expected_code', 'duplicate_prevention',
-    'default_now', 'default_today', 'min_seconds', 'max_seconds', 'min_length', 'max_length',
-    'signer_role', 'checklist_id', 'independent_scoring', 'checked_label', 'level',
+    'allow_multiple', 'inline_mobile', 'template_name', 'min_files', 'max_files', 'camera_only',
+    'min', 'max', 'step', 'pass_threshold', 'expression', 'display_unit', 'expected_code',
+    'duplicate_prevention', 'default_now', 'default_today', 'min_seconds', 'max_seconds',
+    'min_length', 'max_length', 'signer_role', 'checklist_id', 'independent_scoring',
+    'checked_label', 'level',
   ]
 
-  for (const key of allowed) {
-    const entry = value[key]
+  for (const key of primitiveKeys) {
+    const entry = source[key]
     if (entry === null || entry === undefined) continue
-    if (Array.isArray(entry)) result[key] = entry.filter((item) => typeof item === 'string').slice(0, 15)
-    else if (typeof entry === 'string') result[key] = entry.slice(0, 500)
+    if (Array.isArray(entry)) result[key] = entry.filter((item) => typeof item === 'string').map((item) => item.slice(0, 250)).slice(0, 30)
+    else if (typeof entry === 'string') result[key] = entry.slice(0, 1000)
     else if (typeof entry === 'number' && Number.isFinite(entry)) result[key] = entry
     else if (typeof entry === 'boolean') result[key] = entry
   }
+
   return result
 }
 
@@ -55,10 +152,10 @@ function normalizeChecklist(value, request) {
   const assignedRole = asText(value.assigned_role, request.assigned_role || '', 120)
   const rawSections = Array.isArray(value.sections) ? value.sections : []
   const sections = []
-  let remainingItems = 18
+  let remainingItems = 24
 
   for (const rawSection of rawSections) {
-    if (sections.length >= 6 || remainingItems <= 0) break
+    if (sections.length >= 8 || remainingItems <= 0) break
     if (!isRecord(rawSection)) continue
 
     const rawItems = Array.isArray(rawSection.items) ? rawSection.items : []
@@ -74,6 +171,8 @@ function normalizeChecklist(value, request) {
         'title', 'instructions', 'picture', 'video', 'signature', 'date', 'time',
         'date_time', 'staff_member', 'formula',
       ].includes(type)
+      const config = normalizeConfig(rawItem.config)
+      const conditions = config.visibility?.mode === 'conditional' ? config.visibility.conditions : []
 
       let correctiveAction = null
       if (isRecord(rawItem.corrective_action) && rawItem.corrective_action.enabled !== false) {
@@ -89,14 +188,14 @@ function normalizeChecklist(value, request) {
 
       items.push({
         type,
-        label: asText(rawItem.label, `Checklist item ${items.length + 1}`, 350),
-        description: asText(rawItem.description, '', 500),
+        label: asText(rawItem.label, `Checklist item ${items.length + 1}`, 500),
+        description: asText(rawItem.description, '', 1000),
         required: asBoolean(rawItem.required, !['title', 'instructions', 'formula'].includes(type)),
         weight: nonScored ? 0 : asNumber(rawItem.weight, 5, 0, 100),
         critical: asBoolean(rawItem.critical, false),
         allow_na: asBoolean(rawItem.allow_na, false),
-        config: normalizeConfig(rawItem.config),
-        conditions: [],
+        config,
+        conditions,
         corrective_action: correctiveAction,
       })
       remainingItems -= 1
@@ -104,8 +203,8 @@ function normalizeChecklist(value, request) {
 
     if (items.length) {
       sections.push({
-        title: asText(rawSection.title, `Section ${sections.length + 1}`, 160),
-        instructions: asText(rawSection.instructions, '', 500),
+        title: asText(rawSection.title, `Section ${sections.length + 1}`, 180),
+        instructions: asText(rawSection.instructions, '', 1000),
         items,
       })
     }
@@ -115,7 +214,7 @@ function normalizeChecklist(value, request) {
 
   return {
     name: asText(value.name, request.purpose ? `${request.purpose} Checklist` : 'AI Generated Checklist', 180),
-    description: asText(value.description, request.description, 1200),
+    description: asText(value.description, request.description, 2000),
     industry: asText(value.industry, request.industry || '', 120),
     purpose: asText(value.purpose, request.purpose || '', 180),
     assigned_role: assignedRole,
@@ -133,9 +232,7 @@ function extractOutputText(response) {
     if (!isRecord(outputItem)) continue
     const content = Array.isArray(outputItem.content) ? outputItem.content : []
     for (const contentItem of content) {
-      if (isRecord(contentItem) && contentItem.type === 'output_text' && typeof contentItem.text === 'string') {
-        return contentItem.text
-      }
+      if (isRecord(contentItem) && contentItem.type === 'output_text' && typeof contentItem.text === 'string') return contentItem.text
     }
   }
   throw new Error('OpenAI returned no checklist output.')
@@ -155,27 +252,49 @@ async function verifyUser(req) {
   if (!supabaseUrl || !supabaseAnonKey) throw new Error('Supabase server environment variables are missing in Vercel.')
 
   const response = await fetch(`${supabaseUrl.replace(/\/$/, '')}/auth/v1/user`, {
-    headers: {
-      Authorization: authorization,
-      apikey: supabaseAnonKey,
-    },
+    headers: { Authorization: authorization, apikey: supabaseAnonKey },
   })
   if (!response.ok) throw new Error('Your session is invalid or expired. Sign in again.')
   return await response.json()
 }
 
 function buildPrompt(body) {
-  const sourceText = asText(body.source_text, '', 12000)
-  return `Create one practical operational checklist as a compact valid JSON object only. Do not use markdown.
+  const sourceText = asText(body.source_text, '', 20000)
+  return `Create one practical operational checklist as one compact valid JSON object only. Do not use markdown.
 
 Required top-level keys: name, description, industry, purpose, assigned_role, frequency, estimated_minutes, scoring_enabled, sections.
 Each section requires: title, instructions, items.
 Each item requires: type, label, description, required, weight, critical, allow_na, config, corrective_action.
 Supported item types: ${supportedTypes.join(', ')}.
-Corrective action is null or {"enabled":true,"trigger":"failed","require_comment":true,"require_picture":false,"assign_role":"role"}.
-Use only relevant configuration keys. Create no more than 6 sections and 18 total items. Use varied field types, concise labels, and weight 0 for informational, media, date/time, staff, formula, and signature items.
 
-Checklist request: ${asText(body.description, '', 4000)}
+Every item config must include these video-builder settings:
+{
+  "mark_as":"",
+  "background_color":"#ffffff",
+  "label_tag":"",
+  "visibility":{"mode":"always","match":"all","conditions":[]},
+  "reference_material":null,
+  "completion_mode":"manual",
+  "answer_tags":[],
+  "correction_measure":{"enabled":false,"checklist_id":"","optional":false,"trigger_answer":"","action":"do_not_repeat"}
+}
+
+When relevant, add type-specific config:
+- measurement: unit, decimal_places, ranges [{id,label,min,max,status}], input_methods {manual,temperature_probe,detector}
+- multiple_choice: options, allow_multiple, inline_mobile, template_name
+- yes_no: compliant_value and completion_mode auto/manual
+- picture/video: min_files, max_files, camera_only
+- rating: min, max, step, pass_threshold
+- formula: expression, display_unit
+- scanning: expected_code, duplicate_prevention
+- stopwatch: min_seconds, max_seconds
+- text entries: min_length, max_length
+- signature: signer_role
+- sub_checklist: checklist_id, independent_scoring
+
+Use answer_tags for meaningful answer-based labels. Use correction_measure when failure needs a linked corrective checklist or repeat action. Use conditional visibility when a follow-up question depends on another item; source_item_id may be left blank because the builder can assign it later. Create no more than 8 sections and 24 total items. Use varied field types, concise labels, and weight 0 for informational, media, date/time, staff, formula, and signature items.
+
+Checklist request: ${asText(body.description, '', 6000)}
 Industry: ${asText(body.industry, 'Not specified', 120)}
 Purpose: ${asText(body.purpose, 'Not specified', 180)}
 Assigned role: ${asText(body.assigned_role, 'Not specified', 120)}
@@ -201,10 +320,7 @@ export default async function handler(req, res) {
 
       const response = await fetch('https://api.openai.com/v1/responses', {
         method: 'POST',
-        headers: {
-          Authorization: `Bearer ${openAIKey}`,
-          'Content-Type': 'application/json',
-        },
+        headers: { Authorization: `Bearer ${openAIKey}`, 'Content-Type': 'application/json' },
         body: JSON.stringify({
           model,
           background: true,
@@ -220,22 +336,18 @@ export default async function handler(req, res) {
             estimated_minutes: String(asNumber(body.estimated_minutes, 10, 1, 180)),
           },
           input: [
-            { role: 'system', content: [{ type: 'input_text', text: 'You are an operational checklist architect. Return exactly one valid JSON object.' }] },
+            { role: 'system', content: [{ type: 'input_text', text: 'You are an operational checklist architect. Return exactly one valid JSON object with complete item settings.' }] },
             { role: 'user', content: [{ type: 'input_text', text: buildPrompt(body) }] },
           ],
           text: { format: { type: 'json_object' } },
-          max_output_tokens: 6500,
+          max_output_tokens: 12000,
         }),
       })
       const payload = await response.json()
       if (!response.ok) return send(res, response.status, { error: openAIError(payload) })
       if (!payload.id) return send(res, 500, { error: 'OpenAI did not return a background response ID.' })
 
-      return send(res, 202, {
-        status: payload.status || 'queued',
-        response_id: payload.id,
-        model,
-      })
+      return send(res, 202, { status: payload.status || 'queued', response_id: payload.id, model })
     }
 
     if (req.method === 'GET') {
@@ -248,25 +360,12 @@ export default async function handler(req, res) {
       })
       const payload = await response.json()
       if (!response.ok) return send(res, response.status, { error: openAIError(payload) })
-      if (String(payload.metadata?.user_id || '') !== String(user.id || '')) {
-        return send(res, 403, { error: 'This AI generation request belongs to another user.' })
-      }
+      if (String(payload.metadata?.user_id || '') !== String(user.id || '')) return send(res, 403, { error: 'This AI generation request belongs to another user.' })
 
-      if (['queued', 'in_progress'].includes(payload.status)) {
-        return send(res, 202, { status: payload.status, response_id: responseId, model: payload.model || model })
-      }
-      if (payload.status === 'failed' || payload.status === 'cancelled') {
-        return send(res, 500, { error: openAIError(payload), status: payload.status })
-      }
-      if (payload.status === 'incomplete') {
-        return send(res, 500, {
-          error: `OpenAI returned an incomplete checklist (${payload.incomplete_details?.reason || 'unknown reason'}).`,
-          status: payload.status,
-        })
-      }
-      if (payload.status !== 'completed') {
-        return send(res, 202, { status: payload.status || 'in_progress', response_id: responseId })
-      }
+      if (['queued', 'in_progress'].includes(payload.status)) return send(res, 202, { status: payload.status, response_id: responseId, model: payload.model || model })
+      if (payload.status === 'failed' || payload.status === 'cancelled') return send(res, 500, { error: openAIError(payload), status: payload.status })
+      if (payload.status === 'incomplete') return send(res, 500, { error: `OpenAI returned an incomplete checklist (${payload.incomplete_details?.reason || 'unknown reason'}).`, status: payload.status })
+      if (payload.status !== 'completed') return send(res, 202, { status: payload.status || 'in_progress', response_id: responseId })
 
       let parsed
       try {
@@ -284,11 +383,7 @@ export default async function handler(req, res) {
         scoring_enabled: String(payload.metadata?.scoring_enabled) !== 'false',
         estimated_minutes: asNumber(payload.metadata?.estimated_minutes, 10, 1, 180),
       }
-      return send(res, 200, {
-        status: 'completed',
-        checklist: normalizeChecklist(parsed, requestSnapshot),
-        model: payload.model || model,
-      })
+      return send(res, 200, { status: 'completed', checklist: normalizeChecklist(parsed, requestSnapshot), model: payload.model || model })
     }
 
     return send(res, 405, { error: 'Method not allowed.' })
