@@ -25,11 +25,70 @@ export type ItemType =
   | 'title'
   | 'sub_checklist'
 
+export type ConditionOperator = 'equals' | 'not_equals' | 'greater_than' | 'less_than' | 'contains'
+
 export type Condition = {
   source_item_id: string
-  operator: 'equals' | 'not_equals' | 'greater_than' | 'less_than' | 'contains'
+  operator: ConditionOperator
   value: string | number | boolean
   action: 'show' | 'hide' | 'require' | 'create_corrective_action'
+}
+
+export type VisibilitySettings = {
+  mode: 'always' | 'conditional'
+  match: 'all' | 'any'
+  conditions: Condition[]
+}
+
+export type ReferenceMaterial = {
+  name: string
+  mime_type?: string
+  size?: number
+  url?: string
+  data_url?: string
+  display_inline: boolean
+}
+
+export type MeasurementRange = {
+  id: string
+  label: string
+  min: number | null
+  max: number | null
+  status: 'normal' | 'warning' | 'critical'
+}
+
+export type AnswerTagRule = {
+  id: string
+  operator: ConditionOperator
+  value: string | number | boolean
+  tag: string
+}
+
+export type CorrectionMeasure = {
+  enabled: boolean
+  checklist_id: string
+  optional: boolean
+  trigger_answer: string
+  action: 'additional_action' | 'repeat_item' | 'repeat_checklist' | 'do_not_repeat'
+}
+
+export type ItemConfiguration = Record<string, unknown> & {
+  mark_as?: string
+  background_color?: string
+  label_tag?: string
+  visibility?: VisibilitySettings
+  reference_material?: ReferenceMaterial | null
+  completion_mode?: 'auto' | 'manual'
+  answer_tags?: AnswerTagRule[]
+  correction_measure?: CorrectionMeasure
+  ranges?: MeasurementRange[]
+  input_methods?: {
+    manual: boolean
+    temperature_probe: boolean
+    detector: boolean
+  }
+  inline_mobile?: boolean
+  template_name?: string
 }
 
 export type CorrectiveActionRule = {
@@ -51,7 +110,7 @@ export type ChecklistItem = {
   critical: boolean
   allow_na: boolean
   sort_order: number
-  config: Record<string, unknown>
+  config: ItemConfiguration
   conditions: Condition[]
   corrective_action: CorrectiveActionRule | null
 }
