@@ -1,4 +1,3 @@
-import type { ComponentType } from 'react'
 import {
   BadgeCheck,
   Barcode,
@@ -22,13 +21,14 @@ import {
   Timer,
   UserRound,
   Video,
+  type LucideIcon,
 } from 'lucide-react'
 import type { ItemType } from '../types'
 
 export type CatalogItem = {
   type: ItemType
   label: string
-  icon: ComponentType<{ size?: number; strokeWidth?: number }>
+  icon: LucideIcon
   defaultConfig?: Record<string, unknown>
 }
 

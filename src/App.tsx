@@ -269,7 +269,7 @@ export default function App() {
           <button className="secondary" onClick={() => setShowPreview(true)} disabled={!active}><Eye size={16} /> Preview</button>
           <button className="secondary" onClick={save} disabled={!active || saving}>{saving ? <LoaderCircle className="spin" size={16} /> : <Save size={16} />} Save</button>
           <button className="primary" onClick={publish} disabled={!active}><Send size={16} /> Publish</button>
-          {supabase ? <button className="icon-button" title="Sign out" onClick={() => supabase.auth.signOut()}><LogOut size={17} /></button> : null}
+          {supabase ? <button className="icon-button" title="Sign out" onClick={() => void supabase?.auth.signOut()}><LogOut size={17} /></button> : null}
         </div>
       </header>
 
