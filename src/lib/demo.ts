@@ -1,4 +1,5 @@
-import type { Checklist, ChecklistItem, GenerationRequest, GeneratedChecklist, ItemType } from '../types'
+import type { Checklist, ChecklistItem, GenerationRequest, GeneratedChecklist, ItemConfiguration, ItemType } from '../types'
+import { builderDefaults } from './catalog'
 import { newId } from './ids'
 
 export function makeBlankChecklist(): Checklist {
@@ -28,7 +29,7 @@ export function makeBlankChecklist(): Checklist {
   }
 }
 
-function item(type: ItemType, label: string, config: Record<string, unknown> = {}, extra: Partial<ChecklistItem> = {}): Omit<ChecklistItem, 'id' | 'section_id' | 'sort_order'> {
+function item(type: ItemType, label: string, config: ItemConfiguration = {}, extra: Partial<ChecklistItem> = {}): Omit<ChecklistItem, 'id' | 'section_id' | 'sort_order'> {
   return {
     type,
     label,
@@ -37,7 +38,7 @@ function item(type: ItemType, label: string, config: Record<string, unknown> = {
     weight: 5,
     critical: false,
     allow_na: false,
-    config,
+    config: { ...builderDefaults(), ...config },
     conditions: [],
     corrective_action: null,
     ...extra,
@@ -69,24 +70,39 @@ export function generateDemoChecklist(request: GenerationRequest): GeneratedChec
         title: 'Operational Verification',
         instructions: 'Verify each requirement and provide evidence when a requirement is not met.',
         items: [
-          item('yes_no', 'Is the area clean, organized, and ready for operation?', { compliant_value: true }, {
-            critical: true,
-            corrective_action: { enabled: true, trigger: 'failed', require_comment: true, require_picture: strictEvidence },
-          }),
+          item('yes_no', 'Is the area clean, organized, and ready for operation?', {
+            compliant_value: true,
+            completion_mode: 'manual',
+            answer_tags: [{ id: newId('tag'), operator: 'equals', value: false, tag: 'Needs attention' }],
+            correction_measure: {
+              enabled: true,
+              checklist_id: '',
+              optional: false,
+              trigger_answer: 'No',
+              action: 'additional_action',
+            },
+          }, { critical: true }),
           item('measurement', 'Record the main operating measurement', {
             unit: request.industry.toLowerCase().includes('food') ? '°C' : 'unit',
             decimal_places: 1,
-            normal_min: 0,
-            normal_max: 5,
-            warning_min: 5.1,
-            warning_max: 7,
-          }, {
-            critical: true,
-            corrective_action: { enabled: true, trigger: 'warning', require_comment: true, require_picture: strictEvidence },
-          }),
+            ranges: [
+              { id: newId('range'), label: 'Normal', min: 0, max: 5, status: 'normal' },
+              { id: newId('range'), label: 'Warning', min: 5.1, max: 7, status: 'warning' },
+              { id: newId('range'), label: 'Critical', min: 7.1, max: null, status: 'critical' },
+            ],
+            input_methods: { manual: true, temperature_probe: true, detector: true },
+            correction_measure: {
+              enabled: true,
+              checklist_id: '',
+              optional: false,
+              trigger_answer: 'Warning or critical range',
+              action: 'repeat_item',
+            },
+          }, { critical: true }),
           item('multiple_choice', 'Select the current operational status', {
             options: ['Compliant', 'Minor issue', 'Major issue'],
             allow_multiple: false,
+            inline_mobile: true,
             failure_options: ['Major issue'],
           }),
           item('picture', 'Upload supporting evidence', { min_files: strictEvidence ? 1 : 0, max_files: 3, camera_only: false }, { required: strictEvidence, weight: 0 }),
@@ -97,7 +113,7 @@ export function generateDemoChecklist(request: GenerationRequest): GeneratedChec
         title: 'Completion',
         instructions: 'Review the checklist before final approval.',
         items: [
-          item('rating_1_5', 'Rate the overall readiness', { min: 1, max: 5, pass_threshold: 4 }),
+          item('rating_1_5', 'Rate the overall readiness', { min: 1, max: 5, pass_threshold: 4, step: 1 }),
           item('formula', 'Compliance score', { expression: 'weighted_pass_percentage()', display_unit: '%' }, { required: false, weight: 0 }),
           item('signature', 'Final approval signature', { signer_role: request.assigned_role }, { weight: 0 }),
         ],
@@ -125,6 +141,9 @@ export function materializeGenerated(generated: GeneratedChecklist): Checklist {
           id: newId('item'),
           section_id: sectionId,
           sort_order: itemIndex,
+          config: { ...builderDefaults(), ...generatedItem.config },
+          conditions: generatedItem.conditions || [],
+          corrective_action: generatedItem.corrective_action || null,
         })),
       }
     }),
